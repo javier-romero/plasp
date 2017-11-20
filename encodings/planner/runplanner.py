@@ -43,8 +43,8 @@ TEST_ACT_T    = os.path.join(TEST_FILES,"block_actions_t.lp")
 
 # Other systems
 CLINGO      = "clingo"
-FAST_D      = "/home/wv/bin/linux/64/fast-downward-data/fast-downward.py --alias seq-sat-lama-2011"
-FAST_D_TR   = "/home/wv/bin/linux/64/fast-downward-data/fast-downward.py --translate"
+FAST_D      = "/home/wv/bin/linux/64/fast-downward/fast-downward.py --alias seq-sat-lama-2011"
+FAST_D_TR   = "/home/wv/bin/linux/64/fast-downward/fast-downward.py --translate"
 SAS_OUTPUT  = "output.sas"
 M           = "M"
 MP          = "Mp"
