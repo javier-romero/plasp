@@ -697,14 +697,14 @@ class Planner:
             log("Memory: {}MB\n".format(memory))
 
         # loop
-        i=1
+        i=0
         result = None
         max_length = 0
         sol_length = 0
         while True:
+            i += 1
             log("Iteration "+str(i))
             if verbose: time0 = clock()
-            i += 1
             length = scheduler.next(result)
             if length == None:
                 log("PLAN NOT FOUND",PRINT)
@@ -717,6 +717,8 @@ class Planner:
                 sol_length = length
                 break
             if verbose: log("Iteration Time:\t {:.2f}s\n".format(clock()-time0))
+            if i == options['steps']:
+                break
 
         # stats
         log("\n" + clingo_stats.Stats().summary(ctl),PRINT)
@@ -804,6 +806,11 @@ Get help/report bugs via : https://potassco.org/support
         basic.add_argument(
             '--test-print-actions', dest='print_errors', action="store_true",
             help="Print non serializable actions (using option --test)"
+        )
+        basic.add_argument(
+            '--iter',dest='steps',
+            help="Do at most n iterations",
+            metavar='n',default=0,type=int
         )
 
         # Solving Options
