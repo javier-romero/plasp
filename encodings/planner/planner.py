@@ -12,6 +12,7 @@ import re
 from time import clock
 import clingo_stats
 import os
+import clingo_signal_handler
 
 # 
 # DEFINES
@@ -22,6 +23,33 @@ UNKNOWN = 3
 NO_MEM = 4
 CHECK_MEM_PARAM = 0.9
 ALL_CONFIGS = ["tweety", "trendy", "frumpy", "crafty", "jumpy", "handy"]
+INTERRUPT  = """*** Info : (planner): INTERRUPTED by signal!
+UNKNOWN
+
+INTERRUPTED  : 1"""
+SUMMARY_STR = """Calls        : 1
+Time         : 0.000s (Solving: 0.00s 1st Model: 0.00s Unsat: 0.00s)
+CPU Time     : 0.000s"""
+
+STATS_STR = """
+
+Choices      : 0
+Conflicts    : 0        (Analyzed: 0)
+Restarts     : 0
+Problems     : 0        (Average Length: 0.00 Splits: 0)
+Lemmas       : 0        (Deleted: 0)
+  Binary     : 0        (Ratio:   0.00%)
+  Ternary    : 0        (Ratio:   0.00%)
+  Conflict   : 0        (Average Length:    0.0 Ratio:   0.00%)
+  Loop       : 0        (Average Length:    0.0 Ratio:   0.00%)
+  Other      : 0        (Average Length:    0.0 Ratio:   0.00%)
+Backjumps    : 0        (Average:  0.00 Max:   0 Sum:      0)
+  Executed   : 0        (Average:  0.00 Max:   0 Sum:      0 Ratio:   0.00%)
+  Bounded    : 0        (Average:  0.00 Max:   0 Sum:      0 Ratio: 100.00%)
+
+Variables    : 0        (Eliminated:    0 Frozen:    0)
+Constraints  : 0        (Binary:   0.0% Ternary:   0.0% Other:   0.0%)i
+"""
 
 #
 # STDIN
@@ -429,9 +457,10 @@ class Tester:
         return False
 
 
+
 class Solver:
 
-    def __init__(self, ctl, options):
+    def __init__(self, ctl, options, clingo_proxy):
 
         self.__ctl            = ctl
         self.__length         = 0
@@ -442,7 +471,7 @@ class Solver:
         self.__models         = 0
         self.__configs        = options['configs']
         self.__check_at_last  = options['check_at_last']
-
+        self.__clingo_proxy = clingo_proxy
 
         # mem
         self.__mem         = True if options['check_mem'] else False
@@ -532,6 +561,10 @@ class Solver:
             self.__iconfigs = 0
         self.__ctl.configuration.configuration = self.__configs[self.__iconfigs]
 
+    def __do_solve(self, *args, **kwargs):
+        return self.__clingo_proxy.solve(*args, **kwargs)
+        # self.__ctl.solve(**args, **kwargs)
+
     def solve(self, length):
 
         log("Grounded Until:\t {}".format(self.__length))
@@ -590,7 +623,7 @@ class Solver:
                 clingo.Function(QUERY,[length]), True
             )
         self.__set_config()
-        result = self.__ctl.solve(on_model=self.__on_model)
+        result = self.__do_solve(on_model=self.__on_model)
         if self.__verbose: self.__verbose_end("Solving")
         log(str(result))
         if self.__mem and grounded:
@@ -615,7 +648,7 @@ class Solver:
                 # unless test_until_unsat
                 log("Solving...", PRINT)
                 if self.__verbose: self.__verbose_start()
-                result = self.__ctl.solve(on_model=self.__on_model)
+                result = self.__ctl.__do_solve(on_model=self.__on_model)
                 if self.__verbose: self.__verbose_end("Solving")
                 log(str(result))
                 if not result.satisfiable:
@@ -636,10 +669,73 @@ class Solver:
 
 class Planner:
 
+    def __init__(self):
+        self.solver = None
+        self.ctl = None
+        self.clingo_proxy = None
+        self.max_length = 0
+        self.sol_length = 0
+
+    def print_stats(self, summary, stats, models):
+        log("\n" + summary, PRINT)
+        if options['stats']:
+            log(stats, PRINT)
+            # peak memory
+            peak = memory_usage("VmPeak")
+            if peak != -1:
+                log("Memory Peak  : {}MB".format(peak), PRINT)
+            log("Max. Length  : {} steps".format(self.max_length), PRINT)
+            if self.sol_length:
+                log("Sol. Length  : {} steps".format(self.sol_length), PRINT)
+            if options['test']:
+                log("Models       : {}".format(models), PRINT)
+            log("", PRINT)
+
+    def signal_no_stats(self):
+        log(clingo_signal_handler.INTERRUPT.format("planner"), PRINT)
+        self.print_stats(
+            clingo_signal_handler.SUMMARY_STR,
+            clingo_signal_handler.STATS_STR,
+            0
+        )
+
+    def signal_stats(self):
+        log(clingo_signal_handler.INTERRUPT.format("planner"), PRINT)
+        ctl = self.ctl
+        if self.clingo_proxy.control_stats.statistics is not None:
+            ctl = self.clingo_proxy.control_stats
+        self.print_stats(
+            clingo_stats.Stats().summary(ctl),
+            clingo_stats.Stats().statistics(ctl),
+            self.solver.get_models()
+        )
+
+    def signal_any_solving_stats(self):
+        log("[start: stats after solve call]", PRINT)
+        self.print_output()
+        log("[endof: stats after solve call]", PRINT)
+
+    def print_output(self):
+        self.print_stats(
+            clingo_stats.Stats().summary(self.ctl),
+            clingo_stats.Stats().statistics(self.ctl),
+            self.solver.get_models()
+        )
+
     def run(self,options,clingo_options):
 
         time0 = clock()
-        ctl = clingo.Control(clingo_options)
+        self.ctl = ctl = clingo.Control(clingo_options)
+        # clingo signal handler
+        self.clingo_proxy = clingo_signal_handler.ClingoSignalHandler(
+            ctl,
+            name="planner",
+            print_on_any_solving=True,
+            function_on_any_solving=self.signal_any_solving_stats,
+            function_on_solving=self.signal_stats,
+            function_on_not_solving=self.signal_stats,
+            function_on_not_solved=self.signal_no_stats
+        )
 
         # input files
         for i in options['files']:
@@ -661,7 +757,7 @@ class Planner:
         ctl.assign_external(clingo.Function(QUERY,[0]), True)
 
         # solver
-        solver = Solver(ctl,options)
+        self.solver = solver = Solver(ctl, options, self.clingo_proxy)
 
         # scheduler
         # check argument error
@@ -699,8 +795,8 @@ class Planner:
         # loop
         i=0
         result = None
-        max_length = 0
-        sol_length = 0
+        self.max_length = 0
+        self.sol_length = 0
         while True:
             i += 1
             log("Iteration "+str(i))
@@ -708,35 +804,19 @@ class Planner:
             length = scheduler.next(result)
             if length == None:
                 log("PLAN NOT FOUND",PRINT)
-                break  
+                break
             result = solver.solve(length)
-            if result != NO_MEM and length > max_length:
-                max_length = length
+            if result != NO_MEM and length > self.max_length:
+                self.max_length = length
             if result == SATISFIABLE:
                 log("SATISFIABLE",PRINT)
-                sol_length = length
+                self.sol_length = length
                 break
             if verbose: log("Iteration Time:\t {:.2f}s\n".format(clock()-time0))
             if i == options['steps']:
                 break
 
-        # stats
-        log("\n" + clingo_stats.Stats().summary(ctl),PRINT)
-        if options['stats']:
-            log(clingo_stats.Stats().statistics(ctl),PRINT)
-            # peak memory
-            peak = memory_usage("VmPeak")
-            if peak != -1: 
-                log("Memory Peak  : {}MB".format(peak),PRINT)
-            log("Max. Length  : {} steps".format(max_length),PRINT)
-            if sol_length: 
-                log("Sol. Length  : {} steps".format(sol_length),PRINT)
-            if options['test']:
-                log("Models       : {}".format(solver.get_models()), PRINT)
-            log("",PRINT)
-            
-
-
+        self.print_output()
 
 #
 # ARGUMENT PARSER

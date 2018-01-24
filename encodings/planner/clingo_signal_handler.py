@@ -41,7 +41,8 @@ class ControlStats:
 
 class ClingoSignalHandler:
 
-    def __init__(self, control, name,
+    def __init__(self, control,
+                 name="",
                  print_on_any_solving=False,
                  function_on_any_solving=None,
                  function_on_solving=None,
@@ -54,13 +55,17 @@ class ClingoSignalHandler:
         self.control = control
         self.name = name
         self.print_on_any_solving = print_on_any_solving
-        if function_on_any_solving is None:
+        self.function_on_any_solving = function_on_any_solving
+        self.function_on_solving = function_on_solving
+        self.function_on_not_solving = function_on_not_solving
+        self.function_on_not_solved = function_on_not_solved
+        if self.function_on_any_solving is None:
             self.function_on_any_solving = self.on_any_solving
-        if function_on_solving is None:
+        if self.function_on_solving is None:
             self.function_on_solving = self.on_solving
-        if function_on_not_solving is None:
+        if self.function_on_not_solving is None:
             self.function_on_not_solving = self.on_not_solving
-        if function_on_not_solved is None:
+        if self.function_on_not_solved is None:
             self.function_on_not_solved = self.on_not_solved
         self.condition = threading.Condition()
         self.solved = False
