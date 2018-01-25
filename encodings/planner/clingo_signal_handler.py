@@ -35,32 +35,30 @@ Variables    : 0        (Eliminated:    0 Frozen:    0)
 Constraints  : 0        (Binary:   0.0% Ternary:   0.0% Other:   0.0%)i
 """
 
-class ControlStats:
-    def __init__(self):
-        self.statistics = None
-
 class ClingoSignalHandler:
 
     def __init__(self, control,
                  name="",
-                 print_on_any_solving=False,
-                 function_on_any_solving=None,
+                 print_after_any_solving=False,
+                 function_after_any_solving=None,
                  function_on_solving=None,
                  function_on_not_solving=None,
                  function_on_not_solved=None
                 ):
         # public
-        self.control_stats = ControlStats()
+        self.statistics = None
         # private
+        self.interrupted = False
         self.control = control
+        self.solved = False
         self.name = name
-        self.print_on_any_solving = print_on_any_solving
-        self.function_on_any_solving = function_on_any_solving
+        self.print_after_any_solving = print_after_any_solving
+        self.function_after_any_solving = function_after_any_solving
         self.function_on_solving = function_on_solving
         self.function_on_not_solving = function_on_not_solving
         self.function_on_not_solved = function_on_not_solved
-        if self.function_on_any_solving is None:
-            self.function_on_any_solving = self.on_any_solving
+        if self.function_after_any_solving is None:
+            self.function_after_any_solving = self.after_any_solving
         if self.function_on_solving is None:
             self.function_on_solving = self.on_solving
         if self.function_on_not_solving is None:
@@ -68,9 +66,7 @@ class ClingoSignalHandler:
         if self.function_on_not_solved is None:
             self.function_on_not_solved = self.on_not_solved
         self.condition = threading.Condition()
-        self.solved = False
         self.solving = False
-        self.interrupted = False
         self.result = None
         # signal handling
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -80,28 +76,31 @@ class ClingoSignalHandler:
     # private: printing funtions
     #
 
-    def do_print_stats(self, control):
-        print(clingo_stats.Stats().summary(control))
-        print(clingo_stats.Stats().statistics(control))
+    def do_print_stats(self, statistics):
+        print(clingo_stats.Stats().summary(statistics))
+        print(clingo_stats.Stats().statistics(statistics))
 
-    def on_any_solving(self):
-        self.do_print_stats(self.control)
+    def after_any_solving(self):
+        self.do_print_stats(self.control.statistics)
 
     def on_solving(self):
         print(INTERRUPT.format(self.name))
-        self.do_print_stats(self.control)
+        self.do_print_stats(self.control.statistics)
+        sys.exit(1)
 
     def on_not_solving(self):
         print(INTERRUPT.format(self.name))
-        control = self.control
-        if self.control_stats.statistics is not None:
-            control = self.control_stats
-        self.do_print_stats(control)
+        statistics = self.control.statistics
+        if self.statistics is not None:
+            statistics = self.statistics
+        self.do_print_stats(statistics)
+        sys.exit(1)
 
     def on_not_solved(self):
         print(INTERRUPT.format(self.name))
         print(SUMMARY_STR)
         print(STATS_STR)
+        sys.exit(1)
 
     #
     # signal handling
@@ -114,10 +113,8 @@ class ClingoSignalHandler:
             self.interrupted = True
         elif self.solved:
             self.function_on_not_solving()
-            sys.exit(1) # EXITS HERE
         else:
             self.function_on_not_solved()
-            sys.exit(1) # EXITS HERE
 
     # private
     def stop(self, result):
@@ -126,32 +123,41 @@ class ClingoSignalHandler:
         with self.condition:
             self.condition.notify()
 
-    # public
-    def solve(self, *args, **kwargs):
-        self.solving = True
+    # private
+    def do_solve(self, control, *args, **kwargs):
         with self.condition:
-            with self.control.solve(
+            with control.solve(
                 async=True, on_finish=self.stop, *args, **kwargs
             ) as handle:
                 self.condition.wait(float("inf"))
                 handle.wait()
+
+    # public
+    def solve(self, *args, **kwargs):
+        self.solving = True
+        self.do_solve(self.control, *args, **kwargs)
         self.solved = True
         self.solving = False
         if self.interrupted:
             self.function_on_solving()
-            sys.exit(1) # EXITS HERE
-        elif self.print_on_any_solving:
-            self.function_on_any_solving()
+        elif self.print_after_any_solving:
+            self.function_after_any_solving()
+        return self.result
+
+    # public
+    # asyncronous solve that can be interrupted (control object is a parameter)
+    def single_solve(self, control, *args, **kwargs):
+        self.do_solve(control, *args, **kwargs)
         return self.result
 
     # public
     def ground(self, *args):
         if self.solved:
-            self.control_stats.statistics = copy.deepcopy(
+            self.statistics = copy.deepcopy(
                 self.control.statistics
             )
         self.control.ground(*args)
-        self.control_stats.statistics = None
+        self.statistics = None
 
 
 class Test:
@@ -164,7 +170,7 @@ class Test:
     #   stop = 0 normally
     #   stop = 1 on_solving     (solves for long)
     #   stop = 2 on_not_solved  (infinite loop)
-    #   stop = 3 on_not_solving (grounds for long)
+    #   stop = 3 on_not_solving (grounds for long, signals do not work)
     #   stop = 4 on_not_solving (infinite loop)
     #
     def run(self, stop=0):
@@ -175,8 +181,8 @@ class Test:
         clingo_proxy = ClingoSignalHandler(
             control,
             self.name,
-            #print_on_any_solving=True
-            print_on_any_solving=False
+            print_after_any_solving=True
+            #print_after_any_solving=False
         )
 
         # base program
@@ -217,7 +223,7 @@ pigeon(1..n+1). box(1..n).
 
 if __name__ == "__main__":
     stop = 0
-    stop = 1
+    #stop = 1
     #stop = 2
     #stop = 3
     #stop = 4

@@ -401,12 +401,16 @@ _test(A,B) :- #false, _test(A,B).
 
 class Tester:
 
-    def __init__(self, ctl, _files, print_errors, test_once):
+    def __init__(self, ctl, _files, print_errors, test_once, clingo_proxy):
         self.__ctl = ctl
         self.__files = _files
         self.__print_errors = print_errors
         self.__test_once = test_once
+        self.__clingo_proxy = clingo_proxy
         # rest
+        self.__test_solving = False
+        self.__interrupted = False
+        self.__test_ctl = None
         self.__shown = None
         self.__model = 0
         self.__ctl.add(
@@ -421,12 +425,22 @@ class Tester:
     def get_shown(self):
         return self.__shown
 
+    def signal(self):
+        if self.__test_solving:
+            self.__interrupted = True
+            self.__test_ctl.interrupt()
+        else:
+            sys.exit(1)
+
+    def on_model(self, m):
+        self.__shown = [x for x in m.symbols(shown = True)]
+
     def test(self, shown, length):
         if self.__model and self.__test_once:
             log("SERIALIZABLE?", PRINT)
             return True
         # do test
-        ctl = clingo.Control(["--warn=none"])#, "--output-debug=text"])
+        self.__test_ctl = ctl = clingo.Control(["--warn=none"])
         for i in self.__files:
             if i=="-":
                 ctl.add(BASE, [], get_stdin())
@@ -434,14 +448,16 @@ class Tester:
                 ctl.load(i)
         ctl.add(BASE, [], "".join([x + "." for x in shown]))
         ctl.ground([(BASE, [])])
-        with ctl.solve(yield_ = True) as handle:
-            for m in handle:
-                self.__shown = [x for x in m.symbols(shown = True)]
-                if m.cost == []:
-                    break
-            if handle.get().unsatisfiable:
-                log("SERIALIZABLE", PRINT)
-                return True
+        self.__test_solving = True
+        result = self.__clingo_proxy.single_solve(
+            ctl, on_model=self.on_model
+        )
+        self.__test_solving = False
+        if self.__interrupted:
+            sys.exit(1)
+        if result.unsatisfiable:
+            log("SERIALIZABLE", PRINT)
+            return True
         line = ", ".join([str(x) for x in self.__shown])
         if self.__print_errors:
             log("NOT SERIALIZABLE [{}]".format(line), PRINT)
@@ -453,7 +469,7 @@ class Tester:
         if self.__model == 1:
             parts.append((BLOCK_BASE, []))
         parts.append((BLOCK_MODEL, [self.__model, length]))
-        self.__ctl.ground(parts, self)
+        self.__clingo_proxy.ground(parts, self)
         return False
 
 
@@ -471,7 +487,7 @@ class Solver:
         self.__models         = 0
         self.__configs        = options['configs']
         self.__check_at_last  = options['check_at_last']
-        self.__clingo_proxy = clingo_proxy
+        self.__clingo_proxy   = clingo_proxy
 
         # mem
         self.__mem         = True if options['check_mem'] else False
@@ -498,7 +514,8 @@ class Solver:
         if self.__test:
             self.__tester = Tester(
                 self.__ctl, options['test'],
-                options['print_errors'], options['test_once']
+                options['print_errors'], options['test_once'],
+                self.__clingo_proxy
             )
 
     def __print_model(self, shown):
@@ -517,6 +534,12 @@ class Solver:
             self.__shown = shown
         else:
             self.__print_model(shown)
+
+    def signal(self):
+        if self.__tester is not None:
+            self.__tester.signal()
+        else:
+            sys.exit(1)
 
     # to get rid of clingo error when using the tester
     def get_shown(self):
@@ -563,7 +586,9 @@ class Solver:
 
     def __do_solve(self, *args, **kwargs):
         return self.__clingo_proxy.solve(*args, **kwargs)
-        # self.__ctl.solve(**args, **kwargs)
+
+    def __do_ground(self, *args):
+        return self.__clingo_proxy.ground(*args)
 
     def solve(self, length):
 
@@ -588,7 +613,7 @@ class Solver:
             if self.__verbose: self.__verbose_start()
             if self.__test:
                 parts += self.__tester.get_parts(self.__length+1, length+1)
-            self.__ctl.ground(parts, self)
+            self.__do_ground(parts, self)
             if self.__verbose: self.__verbose_end("Grounding")
             for t in range(self.__length + 1, length):
                 self.__ctl.release_external(
@@ -648,7 +673,7 @@ class Solver:
                 # unless test_until_unsat
                 log("Solving...", PRINT)
                 if self.__verbose: self.__verbose_start()
-                result = self.__ctl.__do_solve(on_model=self.__on_model)
+                result = self.__do_solve(on_model=self.__on_model)
                 if self.__verbose: self.__verbose_end("Solving")
                 log(str(result))
                 if not result.satisfiable:
@@ -691,34 +716,48 @@ class Planner:
                 log("Models       : {}".format(models), PRINT)
             log("", PRINT)
 
-    def signal_no_stats(self):
+    def signal_after_any_solving(self):
+        log("[start: stats after solve call]", PRINT)
+        self.print_output()
+        log("[endof: stats after solve call]", PRINT)
+
+    def signal_on_solving(self):
+        log(clingo_signal_handler.INTERRUPT.format("planner"), PRINT)
+        self.print_stats(
+            clingo_stats.Stats().summary(self.ctl.statistics),
+            clingo_stats.Stats().statistics(self.ctl.statistics),
+            self.solver.get_models()
+        )
+        sys.exit(1)
+
+    def signal_on_not_solving(self):
+        log(clingo_signal_handler.INTERRUPT.format("planner"), PRINT)
+        statistics = self.ctl.statistics
+        if self.clingo_proxy.statistics is not None:
+            statistics = self.clingo_proxy.statistics
+        self.print_stats(
+            clingo_stats.Stats().summary(statistics),
+            clingo_stats.Stats().statistics(statistics),
+            self.solver.get_models()
+        )
+        if self.solver is not None:
+            self.solver.signal()
+        else:
+            sys.exit(1)
+
+    def signal_on_not_solved(self):
         log(clingo_signal_handler.INTERRUPT.format("planner"), PRINT)
         self.print_stats(
             clingo_signal_handler.SUMMARY_STR,
             clingo_signal_handler.STATS_STR,
             0
         )
-
-    def signal_stats(self):
-        log(clingo_signal_handler.INTERRUPT.format("planner"), PRINT)
-        ctl = self.ctl
-        if self.clingo_proxy.control_stats.statistics is not None:
-            ctl = self.clingo_proxy.control_stats
-        self.print_stats(
-            clingo_stats.Stats().summary(ctl),
-            clingo_stats.Stats().statistics(ctl),
-            self.solver.get_models()
-        )
-
-    def signal_any_solving_stats(self):
-        log("[start: stats after solve call]", PRINT)
-        self.print_output()
-        log("[endof: stats after solve call]", PRINT)
+        sys.exit(1)
 
     def print_output(self):
         self.print_stats(
-            clingo_stats.Stats().summary(self.ctl),
-            clingo_stats.Stats().statistics(self.ctl),
+            clingo_stats.Stats().summary(self.ctl.statistics),
+            clingo_stats.Stats().statistics(self.ctl.statistics),
             self.solver.get_models()
         )
 
@@ -730,11 +769,11 @@ class Planner:
         self.clingo_proxy = clingo_signal_handler.ClingoSignalHandler(
             ctl,
             name="planner",
-            print_on_any_solving=True,
-            function_on_any_solving=self.signal_any_solving_stats,
-            function_on_solving=self.signal_stats,
-            function_on_not_solving=self.signal_stats,
-            function_on_not_solved=self.signal_no_stats
+            print_after_any_solving=options['stats_iter'],
+            function_after_any_solving=self.signal_after_any_solving,
+            function_on_solving=self.signal_on_solving,
+            function_on_not_solving=self.signal_on_not_solving,
+            function_on_not_solved=self.signal_on_not_solved
         )
 
         # input files
@@ -747,13 +786,13 @@ class Planner:
         ctl.add(BASE,[],EXTERNALS_PROGRAM)
         if options['test']:
             ctl.add(BASE,[],TEST_NO_WARNING)
-        if options['forbid_actions']: 
+        if options['forbid_actions']:
             ctl.add(BASE, [], FORBID_ACTIONS_PROGRAM)
-        if options['force_actions']:  
+        if options['force_actions']:
             ctl.add(BASE, [], FORCE_ACTIONS_PROGRAM)
 
         # ground base, and set initial query
-        ctl.ground([(BASE,[]), (CHECK,[0])])
+        self.clingo_proxy.ground([(BASE,[]), (CHECK,[0])])
         ctl.assign_external(clingo.Function(QUERY,[0]), True)
 
         # solver
@@ -816,6 +855,7 @@ class Planner:
             if i == options['steps']:
                 break
 
+        # print output
         self.print_output()
 
 #
@@ -874,6 +914,10 @@ Get help/report bugs via : https://potassco.org/support
         )
         basic.add_argument(
             '--stats',dest='stats',action="store_true",help="Print statistics"
+        )
+        basic.add_argument(
+            '--stats-iter', dest='stats_iter', action="store_true",
+            help="Print statistics at every iteration"
         )
         basic.add_argument(
             '--outf',dest='outf',type=int,metavar="n",
