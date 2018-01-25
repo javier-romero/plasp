@@ -689,7 +689,7 @@ class Planner:
                 log("Models       : {}".format(models), PRINT)
             log("", PRINT)
 
-    def signal_after_any_solving(self):
+    def signal_after_solving(self):
         log("[start: stats after solve call]", PRINT)
         self.print_output()
         log("[endof: stats after solve call]", PRINT)
@@ -742,8 +742,8 @@ class Planner:
         self.clingo_proxy = clingo_signal_handler.ClingoSignalHandler(
             ctl,
             name="planner",
-            print_after_any_solving=options['stats_iter'],
-            function_after_any_solving=self.signal_after_any_solving,
+            print_after_solving=options['stats_iter'],
+            function_after_solving=self.signal_after_solving,
             function_on_solving=self.signal_on_solving,
             function_on_not_solving=self.signal_on_not_solving,
             function_on_not_solved=self.signal_on_not_solved

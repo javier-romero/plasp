@@ -39,26 +39,26 @@ class ClingoSignalHandler:
 
     def __init__(self, control,
                  name="",
-                 print_after_any_solving=False,
-                 function_after_any_solving=None,
+                 print_after_solving=False,
+                 function_after_solving=None,
                  function_on_solving=None,
                  function_on_not_solving=None,
                  function_on_not_solved=None
                 ):
         # public
         self.statistics = None
+        self.function_after_solving = function_after_solving
+        self.function_on_solving = function_on_solving
+        self.function_on_not_solving = function_on_not_solving
+        self.function_on_not_solved = function_on_not_solved
         # private
         self.interrupted = False
         self.control = control
         self.solved = False
         self.name = name
-        self.print_after_any_solving = print_after_any_solving
-        self.function_after_any_solving = function_after_any_solving
-        self.function_on_solving = function_on_solving
-        self.function_on_not_solving = function_on_not_solving
-        self.function_on_not_solved = function_on_not_solved
-        if self.function_after_any_solving is None:
-            self.function_after_any_solving = self.after_any_solving
+        self.print_after_solving = print_after_solving
+        if self.function_after_solving is None:
+            self.function_after_solving = self.after_solving
         if self.function_on_solving is None:
             self.function_on_solving = self.on_solving
         if self.function_on_not_solving is None:
@@ -80,7 +80,7 @@ class ClingoSignalHandler:
         print(clingo_stats.Stats().summary(statistics))
         print(clingo_stats.Stats().statistics(statistics))
 
-    def after_any_solving(self):
+    def after_solving(self):
         self.do_print_stats(self.control.statistics)
 
     def on_solving(self):
@@ -140,8 +140,8 @@ class ClingoSignalHandler:
         self.solving = False
         if self.interrupted:
             self.function_on_solving()
-        elif self.print_after_any_solving:
-            self.function_after_any_solving()
+        elif self.print_after_solving:
+            self.function_after_solving()
         return self.result
 
     # public
@@ -181,8 +181,8 @@ class Test:
         clingo_proxy = ClingoSignalHandler(
             control,
             self.name,
-            print_after_any_solving=True
-            #print_after_any_solving=False
+            print_after_solving=True
+            #print_after_solving=False
         )
 
         # base program
