@@ -129,7 +129,7 @@ class ClingoSignalHandler:
             with control.solve(
                 async=True, on_finish=self.stop, *args, **kwargs
             ) as handle:
-                self.condition.wait(float("inf"))
+                self.condition.wait()
                 handle.wait()
 
     # public
